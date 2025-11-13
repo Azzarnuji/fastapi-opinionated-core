@@ -6,6 +6,7 @@ from fastapi_opinionated.shared.logger import logger
 
 class RouterRegistry:
     controllers = []
+    function_routes = []
 
     @classmethod
     def register_controller(cls, meta):
@@ -31,6 +32,17 @@ class RouterRegistry:
                 })
 
         return routes
+    
+    @classmethod
+    def register_function_route(cls, handler, method, path, group, file_path):
+        cls.function_routes.append({
+            "handler": handler,
+            "http_method": method,
+            "path": path,
+            "group": group,
+            "file_path": file_path,
+            "controller": None,
+        })
     
     @classmethod
     def load(cls, root="app/domains"):
@@ -69,5 +81,16 @@ class RouterRegistry:
             logger.info(
                 f"Registered route: [{route['http_method']}] {route['path']} -> "
                 f"{route['controller']}.{route['handler'].__name__} "
+            )
+        # FUNCTIONAL ROUTES
+        for fr in cls.function_routes:
+            router.add_api_route(
+                fr["path"],
+                fr["handler"],
+                methods=[fr["http_method"]],
+                tags=[fr["group"]],
+            )
+            logger.info(
+                f"Registered function route: [{fr['http_method']}] {fr['path']} -> {fr['handler'].__name__}"
             )
         return router

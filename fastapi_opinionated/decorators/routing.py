@@ -2,7 +2,7 @@
 import inspect
 
 
-def Controller(base_path: str):
+def Controller(base_path: str, group: str | None = None):
     def wrapper(cls):
         routes = []
 
@@ -12,7 +12,8 @@ def Controller(base_path: str):
                 routes.append({
                     "func_name": attr_name,
                     "path": attr._http_path,
-                    "http_method": attr._http_method
+                    "http_method": attr._http_method,
+                    "group": group if group else base_path.replace("/", "").upper(),
                 })
 
         # ambil lokasi file controller.py
@@ -39,10 +40,33 @@ def Http(method: str, path: str):
         return func
     return decorator
 
+# ----------------------------------------------------------------
+# HTTP METHOD DECORATORS (FULL LIST)
+# ----------------------------------------------------------------
 
 def Get(path: str):
     return Http("GET", path)
 
-
 def Post(path: str):
     return Http("POST", path)
+
+def Put(path: str):
+    return Http("PUT", path)
+
+def Patch(path: str):
+    return Http("PATCH", path)
+
+def Delete(path: str):
+    return Http("DELETE", path)
+
+def Options(path: str):
+    return Http("OPTIONS", path)
+
+def Head(path: str):
+    return Http("HEAD", path)
+
+def Trace(path: str):
+    return Http("TRACE", path)
+
+def Connect(path: str):
+    return Http("CONNECT", path)

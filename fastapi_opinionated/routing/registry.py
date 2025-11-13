@@ -15,6 +15,7 @@ class RouterRegistry:
     def get_routes(cls):
         routes = []
         for ctrl in cls.controllers:
+            logger.debug(f"Processing controller: {ctrl['controller_name']}")
             instance = ctrl["instance"]
             base = ctrl["base"]
             file_path = ctrl.get("file_path")
@@ -25,7 +26,8 @@ class RouterRegistry:
                     "http_method": m["http_method"],
                     "handler": getattr(instance, m["func_name"]),
                     "controller": ctrl["controller_name"],
-                    "file_path": file_path
+                    "file_path": file_path,
+                    "group": m["group"] if "group" in m else None,
                 })
 
         return routes
@@ -62,6 +64,7 @@ class RouterRegistry:
                 route["path"],
                 route["handler"],
                 methods=[route["http_method"]],
+                tags=[route["group"]],
             )
             logger.info(
                 f"Registered route: [{route['http_method']}] {route['path']} -> "

@@ -18,6 +18,11 @@ packages = [
 
 [tool.poetry.group.dev.dependencies]
 twine = "^6.2.0"
+typer = "^0.20.0"
+
+[tool.poetry.scripts]
+fastapi-opinionated = "fastapi_opinionated.cli.main:main"
+
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

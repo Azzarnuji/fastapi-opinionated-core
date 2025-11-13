@@ -1,7 +1,9 @@
 # fastapi_opinionated/decorators/routing.py
+import inspect
+
+
 def Controller(base_path: str):
     def wrapper(cls):
-        # collect methods marked by GET/POST/etc
         routes = []
 
         for attr_name in dir(cls):
@@ -13,11 +15,17 @@ def Controller(base_path: str):
                     "http_method": attr._http_method
                 })
 
+        # ambil lokasi file controller.py
+        file_path = inspect.getfile(cls)
+
         from fastapi_opinionated.routing.registry import RouterRegistry
+
         RouterRegistry.register_controller({
-            "instance": cls(),  # instantiate controller
+            "instance": cls(),
             "base": base_path,
-            "methods": routes
+            "methods": routes,
+            "file_path": file_path,        # <--- tambahkan ini
+            "controller_name": cls.__name__
         })
 
         return cls

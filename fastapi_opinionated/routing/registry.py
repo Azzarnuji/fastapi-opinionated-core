@@ -1,9 +1,15 @@
-# fastapi_opinionated/routing/registry.py
+import importlib
+import os
+from fastapi import APIRouter
+from fastapi_opinionated.shared.logger import logger
+
+
 class RouterRegistry:
     controllers = []
+
     @classmethod
-    def register_controller(cls, controller_meta):
-        cls.controllers.append(controller_meta)
+    def register_controller(cls, meta):
+        cls.controllers.append(meta)
 
     @classmethod
     def get_routes(cls):
@@ -11,13 +17,54 @@ class RouterRegistry:
         for ctrl in cls.controllers:
             instance = ctrl["instance"]
             base = ctrl["base"]
-            methods = ctrl["methods"]
+            file_path = ctrl.get("file_path")
 
-            for m in methods:
+            for m in ctrl["methods"]:
                 routes.append({
                     "path": base + m["path"],
                     "http_method": m["http_method"],
-                    "handler": getattr(instance, m["func_name"])
+                    "handler": getattr(instance, m["func_name"]),
+                    "controller": ctrl["controller_name"],
+                    "file_path": file_path
                 })
 
         return routes
+    
+    @classmethod
+    def load(cls, root="app/domains"):
+        """
+        Auto-import semua controller berdasarkan module path yang benar
+        Tidak ada exec_module, tidak ada double import.
+        """
+        for root, dirs, files in os.walk(root):
+            for file in files:
+                if not file.endswith(".py") or file.startswith("__"):
+                    continue
+
+                file_path = os.path.join(root, file)
+
+                module_path = (
+                    file_path
+                    .replace("/", ".")
+                    .replace("\\", ".")
+                    .rsplit(".py", 1)[0]
+                )
+
+                importlib.import_module(module_path)
+                logger.info(f"Imported module: {module_path}")
+                
+    @classmethod
+    def as_fastapi_router(cls):
+        router = APIRouter()
+
+        for route in cls.get_routes():
+            router.add_api_route(
+                route["path"],
+                route["handler"],
+                methods=[route["http_method"]],
+            )
+            logger.info(
+                f"Registered route: [{route['http_method']}] {route['path']} -> "
+                f"{route['controller']}.{route['handler'].__name__} "
+            )
+        return router

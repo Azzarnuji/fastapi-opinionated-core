@@ -181,7 +181,10 @@ class App:
         plugin_api = cls._cmd(plugin.command_name, **plugin_kwargs)
 
         setattr(cls.plugin, plugin.public_name, plugin_api)
-
+        
+        # Call on_ready hook
+        plugin.on_ready(cls, cls.fastapi, plugin_api)
+        
         return plugin_api
 
 

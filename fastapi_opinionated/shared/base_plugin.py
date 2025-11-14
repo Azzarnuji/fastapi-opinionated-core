@@ -28,3 +28,10 @@ class BasePlugin:
 
         __init__.__signature__ = sig
         setattr(cls, "__init__", __init__)
+        
+    def on_ready(self, app, fastapi_app, plugin_api):
+        """
+        Called after plugin initialization is complete.
+        Override this in subclasses.
+        """
+        pass

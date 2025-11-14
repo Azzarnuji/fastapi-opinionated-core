@@ -1,9 +1,9 @@
 import importlib
 import os
 from fastapi import APIRouter
-from fastapi_opinionated.shared.logger import logger
+from fastapi_opinionated.shared.logger import ns_logger
 
-
+logger = ns_logger("RouterRegistry")
 class RouterRegistry:
     controllers = []
     function_routes = []
@@ -16,7 +16,7 @@ class RouterRegistry:
     def get_routes(cls):
         routes = []
         for ctrl in cls.controllers:
-            logger.debug(f"Processing controller: {ctrl['controller_name']}")
+            logger.info(f"Processing controller: {ctrl['controller_name']}")
             instance = ctrl["instance"]
             base = ctrl["base"]
             file_path = ctrl.get("file_path")

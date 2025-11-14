@@ -1,9 +1,11 @@
 # fastapi_opinionated/app.py
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi_opinionated.routing.registry import RouterRegistry
 from fastapi_opinionated.shared.base_plugin import BasePlugin
 from fastapi_opinionated.shared.logger import ns_logger
+from fastapi_opinionated.exceptions.plugin_exception import PluginException
 
 logger = ns_logger("FastAPIOpinionated")
 class App:
@@ -105,7 +107,14 @@ class App:
         """
 
         app = FastAPI(**fastapi_kwargs)
-
+        @app.exception_handler(PluginException)
+        async def plugin_exception_handler(request, exc: PluginException):
+            logger.error(f"PluginException occurred: {exc}")
+            return JSONResponse(
+                status_code=500,
+                content={"detail": f"Plugin error: {exc}"},
+            )
+            
         RouterRegistry.load()
 
         router = RouterRegistry.as_fastapi_router()
@@ -113,7 +122,7 @@ class App:
 
         logger.info("Application started successfully")
 
-        cls.fastapi = app  # <--- SIMPAN KE CORE
+        cls.fastapi = app  # <--- Save fastapi instance here
 
         return app
 

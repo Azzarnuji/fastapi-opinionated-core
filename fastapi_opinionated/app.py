@@ -31,13 +31,7 @@ class App(PluginRegistry):
             
             
 
-            # STEP 2 — now safe to enable plugins
-            cls._load_enabled_plugins()
             
-            # -----------------------------
-            # load controllers
-            # -----------------------------
-            RouterRegistry.load()
 
             # =======================================================
             # COMBINED LIFESPAN
@@ -46,70 +40,97 @@ class App(PluginRegistry):
             async def combined_lifespan(app):
                 plugins = cls._plugin_instances
 
-                # -----------------------------
-                # on_plugins_loaded
-                # -----------------------------
-                for name, plugin in plugins.items():
-                    if hasattr(plugin, "on_plugins_loaded"):
-                        plugin.on_plugins_loaded(cls, app)
+                try:
+                    # ===========================================================
+                    # PHASE 2 — SAFE INITIALIZATION (setelah FastAPI CLI print)
+                    # ===========================================================
 
-                # -----------------------------
-                # on_controllers_loaded
-                # -----------------------------
-                for name, plugin in plugins.items():
-                    if hasattr(plugin, "on_controllers_loaded"):
-                        plugin.on_controllers_loaded(cls, app)
+                    # Enable plugins
+                    cls._load_enabled_plugins()
 
-                # -----------------------------
-                # on_ready + on_ready_async
-                # -----------------------------
-                for name, plugin in plugins.items():
-                    plugin_api = getattr(cls.plugin, name, None)
+                    # Load controllers
+                    RouterRegistry.load()
+                    
+                    # Bind routes
+                    router = RouterRegistry.as_fastapi_router()
+                    app.include_router(router)
 
-                    if hasattr(plugin, "on_ready"):
-                        plugin.on_ready(cls, app, plugin_api)
+                    # on_plugins_loaded
+                    for name, plugin in plugins.items():
+                        if hasattr(plugin, "on_plugins_loaded"):
+                            plugin.on_plugins_loaded(cls, app)
 
-                    if hasattr(plugin, "on_ready_async"):
-                        await plugin.on_ready_async(cls, app, plugin_api)
+                    # on_controllers_loaded
+                    for name, plugin in plugins.items():
+                        if hasattr(plugin, "on_controllers_loaded"):
+                            plugin.on_controllers_loaded(cls, app)
 
-                # -----------------------------
-                # on_app_ready
-                # -----------------------------
-                for name, plugin in plugins.items():
-                    if hasattr(plugin, "on_app_ready"):
-                        plugin.on_app_ready(cls, app)
+                    # on_ready (+ async)
+                    for name, plugin in plugins.items():
+                        plugin_api = getattr(cls.plugin, name, None)
 
-                logger.info("FastAPI application completed initialization.")
+                        if hasattr(plugin, "on_ready"):
+                            plugin.on_ready(cls, app, plugin_api)
 
-                # user lifespan
-                if user_lifespan:
-                    async with user_lifespan(app):
+                        if hasattr(plugin, "on_ready_async"):
+                            await plugin.on_ready_async(cls, app, plugin_api)
+
+                    # on_app_ready
+                    for name, plugin in plugins.items():
+                        if hasattr(plugin, "on_app_ready"):
+                            plugin.on_app_ready(cls, app)
+
+                    logger.info("FastAPI application completed initialization.")
+
+                    # ===========================================================
+                    # USER LIFESPAN
+                    # ===========================================================
+                    if user_lifespan:
+                        async with user_lifespan(app):
+                            yield
+                    else:
                         yield
-                else:
-                    yield
 
-                # -----------------------------
-                # shutdown
-                # -----------------------------
-                for name, plugin in plugins.items():
-                    plugin_api = getattr(cls.plugin, name, None)
+                except Exception as e:
+                    logger.error(f"Initialization failed: {e}")
+                    raise
 
-                    if hasattr(plugin, "on_before_shutdown"):
-                        plugin.on_before_shutdown(cls, app, plugin_api)
+                finally:
+                    # ===========================================================
+                    # GUARANTEED SHUTDOWN SEQUENCE
+                    # ===========================================================
 
-                    if hasattr(plugin, "on_before_shutdown_async"):
-                        await plugin.on_before_shutdown_async(cls, app, plugin_api)
+                    for name, plugin in plugins.items():
+                        plugin_api = getattr(cls.plugin, name, None)
 
-                for name, plugin in plugins.items():
-                    plugin_api = getattr(cls.plugin, name, None)
+                        if hasattr(plugin, "on_before_shutdown"):
+                            try:
+                                plugin.on_before_shutdown(cls, app, plugin_api)
+                            except Exception as e:
+                                logger.error(f"Error in on_before_shutdown for {name}: {e}")
 
-                    if "on_shutdown_async" in plugin.__class__.__dict__:
-                        logger.info(f"Shutting down plugin '{name}'")
-                        await plugin.on_shutdown_async(cls, app, plugin_api)
+                        if hasattr(plugin, "on_before_shutdown_async"):
+                            try:
+                                await plugin.on_before_shutdown_async(cls, app, plugin_api)
+                            except Exception as e:
+                                logger.error(f"Error in on_before_shutdown_async for {name}: {e}")
 
-                    if "on_shutdown" in plugin.__class__.__dict__:
-                        logger.info(f"Shutting down plugin '{name}'")
-                        plugin.on_shutdown(cls, app, plugin_api)
+                    for name, plugin in plugins.items():
+                        plugin_api = getattr(cls.plugin, name, None)
+
+                        if hasattr(plugin, "on_shutdown_async"):
+                            logger.info(f"Shutting down plugin '{name}'")
+                            try:
+                                await plugin.on_shutdown_async(cls, app, plugin_api)
+                            except Exception:
+                                pass
+
+                        if hasattr(plugin, "on_shutdown"):
+                            logger.info(f"Shutting down plugin '{name}'")
+                            try:
+                                plugin.on_shutdown(cls, app, plugin_api)
+                            except Exception:
+                                pass
 
             # Attach lifespan to app
             app.router.lifespan_context = combined_lifespan
@@ -122,10 +143,6 @@ class App(PluginRegistry):
                     status_code=500,
                     content={"detail": f"Plugin error: {exc}"},
                 )
-
-            # Bind routes
-            router = RouterRegistry.as_fastapi_router()
-            app.include_router(router)
 
             return app
         except RuntimeError as e:

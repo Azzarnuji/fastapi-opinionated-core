@@ -1,4 +1,5 @@
 import importlib
+import inspect
 import os
 from fastapi import APIRouter
 from fastapi_opinionated.shared.logger import ns_logger
@@ -80,6 +81,11 @@ class RouterRegistry:
         -----
         Metadata is stored for later conversion into concrete FastAPI routes.
         """
+        # prevent duplicate controllers
+        for c in cls.controllers:
+            if c["controller_name"] == meta["controller_name"] and c["file_path"] == meta["file_path"]:
+                return  # skip duplicate
+
         cls.controllers.append(meta)
 
     # ----------------------------------------------------------------------
@@ -171,29 +177,36 @@ class RouterRegistry:
     @classmethod
     def load(cls, root="app/domains"):
         """
-        Recursively discover and import all Python modules under ``root``.
-
-        Automatically imports:
-            - every ``*.py`` file
-            - except private modules (``__xxx__.py``)
-
-        Parameters
-        ----------
-        root : str, default="app/domains"
-            Base directory to begin discovery.
-
-        Notes
-        -----
-        - Importing triggers decorator execution, which registers controllers.
-        - No ``exec_module`` is used; safe native import system only.
-        - Double imports are avoided by Python's ``sys.modules`` caching.
+        Recursively import ONLY Python modules inside any `controllers/` folder.
+        Supports unlimited nested subdirectories under controllers/.
         """
-        for root, dirs, files in os.walk(root):
+
+        root = root.rstrip("/")
+
+        for current_root, dirs, files in os.walk(root):
+
+            # Skip everything that is NOT inside a controllers folder
+            # Example valid: .../controllers, .../controllers/x, .../controllers/x/y
+            if "controllers" not in current_root.split("/"):
+                continue
+
+            # Clean directory list (skip hidden, __pycache__, etc.)
+            dirs[:] = [
+                d for d in dirs
+                if not d.startswith("__")
+                and not d.startswith(".")
+                and d != "__pycache__"
+            ]
+
+            dirs.sort()
+            files.sort()
+
             for file in files:
                 if not file.endswith(".py") or file.startswith("__"):
                     continue
 
-                file_path = os.path.join(root, file)
+                file_path = os.path.join(current_root, file)
+
                 module_path = (
                     file_path
                     .replace("/", ".")
@@ -201,8 +214,12 @@ class RouterRegistry:
                     .rsplit(".py", 1)[0]
                 )
 
-                importlib.import_module(module_path)
-                logger.info(f"Imported module: {module_path}")
+                try:
+                    importlib.import_module(module_path)
+                    logger.info(f"Imported controller: {module_path}")
+                except Exception as e:
+                    logger.error(f"Failed to import {module_path}: {e}")
+
                 
     # ----------------------------------------------------------------------
     # PATH NORMALIZATION
@@ -228,7 +245,7 @@ class RouterRegistry:
     # DUPLICATE DETECTION
     # ----------------------------------------------------------------------
     @classmethod
-    def detect_route_duplicates(cls):
+    def detect_route_duplicates(cls, routes):
         """
         Detect duplicate (METHOD, PATH) routes across class-based and functional routes.
 
@@ -245,7 +262,7 @@ class RouterRegistry:
         collisions = {}
 
         # CLASS-BASED
-        for r in cls.get_routes():
+        for r in routes:
             key = (r["http_method"].upper(), cls.normalize_path(r["path"]))
             entry = {
                 "handler": r["handler"].__name__,
@@ -282,7 +299,8 @@ class RouterRegistry:
         # ================================
         # DUPLICATE VALIDATION
         # ================================
-        duplicates = cls.detect_route_duplicates()
+        routes = cls.get_routes()
+        duplicates = cls.detect_route_duplicates(routes)
         if duplicates:
             msg_lines = ["Duplicate route definitions detected:\n"]
 
@@ -304,7 +322,7 @@ class RouterRegistry:
         router = APIRouter()
 
         # CLASS-BASED ROUTES
-        for route in cls.get_routes():
+        for route in routes:
             router.add_api_route(
                 route["path"],
                 route["handler"],

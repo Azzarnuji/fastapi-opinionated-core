@@ -59,6 +59,13 @@ def validate_plugin_path(path: str):
         return True
     except Exception:
         return False
+    
+def is_local_path(path: str):
+    return (
+        path.startswith("./") or
+        path.startswith("../") or
+        os.path.isabs(path)  # /home/... atau C:\...
+    )
 
 # ===========================================================
 # COMMAND: INSTALL
@@ -255,7 +262,8 @@ def enable_plugin(plugin_path: str):
     # AUTO-PUBLISH PROMPT
     # ===========================================================
     try:
-        PluginClass = import_string(plugin_path)
+        publish_path = plugin_path if not is_local_path(plugin_path) else local_plugin_path
+        PluginClass = import_string(publish_path)
         plugin_instance = PluginClass()
     except Exception:
         typer.echo(c("⚠ Cannot import plugin to check publishability.", "WARNING"))
@@ -328,6 +336,20 @@ def publish_plugin(plugin_path: str, force: bool = typer.Option(False, "--force"
     domain = meta.domain
     overwrite_all = meta.overwrite
     overwrite_rules = meta.overwrite_rules or {}
+    if hasattr(meta, "pre_publish"):
+        typer.echo()
+        typer.echo(c(f"Running Pre Publish Script", "INFO"))
+        typer.echo()
+        import asyncio
+        asyncio.run(meta.pre_publish())
+        typer.echo()
+    if hasattr(meta, "post_publish"):
+        typer.echo()
+        typer.echo(c(f"Running Post Publish Script", "INFO"))
+        typer.echo()
+        import asyncio
+        asyncio.run(meta.post_publish())
+        typer.echo()
 
     typer.echo(c(f"📦 Publishing plugin assets for domain: {domain}", "INFO"))
 

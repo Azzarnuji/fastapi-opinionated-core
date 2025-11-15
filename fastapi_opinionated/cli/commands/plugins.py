@@ -60,6 +60,99 @@ def validate_plugin_path(path: str):
     except Exception:
         return False
 
+# ===========================================================
+# COMMAND: INSTALL
+# ===========================================================
+@plugins_cli.command("install")
+def install_plugin(source: str):
+    """
+    Install a plugin from:
+    - PyPI package name
+    - GitHub URL
+    - git+ URL
+    - local folder
+    """
+
+    import re
+    from pathlib import Path
+
+    GIT_PATTERNS = [
+        r"^https://.*\.git$",
+        r"^https://.*",
+        r"^git@.*",
+        r"^git\+https://.*",
+        r"^git\+ssh://.*",
+    ]
+
+    def is_git_url(s: str) -> bool:
+        return any(re.match(p, s) for p in GIT_PATTERNS)
+
+    def is_local_path(s: str) -> bool:
+        return os.path.exists(s) or s.startswith(("./", "../", "/"))
+
+    use_poetry = False
+    if os.path.exists("pyproject.toml"):
+        with open("pyproject.toml") as f:
+            if "[tool.poetry]" in f.read():
+                use_poetry = True
+
+    # ======================================
+    # CASE 1 — LOCAL PATH
+    # ======================================
+    if is_local_path(source):
+        path = str(Path(source).resolve())
+        typer.echo(c(f"Detected LOCAL plugin: {path}", "INFO"))
+
+        try:
+            if use_poetry:
+                subprocess.check_call(["poetry", "add", path, "--editable"])
+            else:
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "-e", path])
+
+            typer.echo(c(f"✔ Local plugin installed: {path}", "SUCCESS"))
+        except Exception as e:
+            typer.echo(c(f"❌ Failed installing plugin: {e}", "ERROR"))
+            raise typer.Exit(1)
+        return
+
+    # ======================================
+    # CASE 2 — GIT URL
+    # ======================================
+    if is_git_url(source):
+        git_url = source
+        if not git_url.startswith("git+"):
+            git_url = f"git+{git_url}"
+
+        typer.echo(c(f"Detected GIT plugin: {git_url}", "INFO"))
+
+        try:
+            if use_poetry:
+                subprocess.check_call(["poetry", "add", git_url])
+            else:
+                subprocess.check_call([sys.executable, "-m", "pip", "install", git_url])
+
+            typer.echo(c(f"✔ Git plugin installed: {git_url}", "SUCCESS"))
+        except Exception as e:
+            typer.echo(c(f"❌ Failed installing git plugin: {e}", "ERROR"))
+            raise typer.Exit(1)
+        return
+
+    # ======================================
+    # CASE 3 — PYPI (fallback)
+    # ======================================
+    typer.echo(c(f"Installing PyPI package '{source}'...", "INFO"))
+
+    try:
+        if use_poetry:
+            subprocess.check_call(["poetry", "add", source])
+        else:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", source])
+
+        typer.echo(c(f"✔ PyPI plugin installed: {source}", "SUCCESS"))
+    except Exception as e:
+        typer.echo(c(f"❌ Failed installing plugin: {e}", "ERROR"))
+        raise typer.Exit(1)
+
 
 # ===========================================================
 # COMMAND: LIST

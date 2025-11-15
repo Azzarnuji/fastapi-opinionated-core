@@ -1,101 +1,90 @@
-from abc import ABC, abstractmethod
+# fastapi_opinionated/shared/base_plugin.py
 
+import inspect
 
-class BasePlugin(ABC):
+class BasePlugin:
     """
-    Base abstraction for all plugins.
-
-    Existing hooks:
-        - on_ready
-        - on_ready_async
-        - on_shutdown
-        - on_shutdown_async
-
-    NEW (Lifecycle V2 hooks — fully optional, non-breaking):
-        ENABLE PHASE (before FastAPI startup):
-            - on_pre_enable
-            - on_enable
-            - on_post_enable
-
-        STARTUP PHASE (during lifespan startup):
-            - on_plugins_loaded
-            - on_controllers_loaded
-            - on_app_ready
-
-        SHUTDOWN PHASE (before existing shutdown hooks):
-            - on_before_shutdown
-            - on_before_shutdown_async
+    Base class for all FastAPI Opinionated plugins.
+    Provides:
+    - Lifecycle hooks
+    - Plugin API returning (optional)
+    - Publishable plugin metadata
+    - Plugin configuration support
     """
 
-    public_name: str = ""
-    command_name: str = ""
-    required_config: bool | None = False 
+    # Human-friendly name (for CLI listing)
+    public_name: str = None
 
-    # =======================================================
-    # MANDATORY INTERNAL INIT
-    # =======================================================
+    # Unique command name (for CLI enable/disable)
+    command_name: str = None
+
+    # Whether plugin expects config passed in App.configurePlugin()
+    required_config: bool = False
+
+    # Whether plugin exposes publishable files (e.g., UI controllers)
+    publishable: bool = False
+
+    # Name of folder inside plugin root that contains publishable files
+    publish_dir: str = "publish"
+
+    # Whether plugin returns plugin_api (EventBus & Socket do, UI type usually not)
+    returns_plugin_api: bool = True
+
+    def __init__(self, **config):
+        """
+        Store plugin config passed by App.configurePlugin().
+        """
+        self.config = config or {}
+
+    # ---------- INTERNAL HOOK FOR MOUNTING ----------
     @staticmethod
-    @abstractmethod
-    def _internal(app, fastapi_app, *args, **kwargs):
-        raise NotImplementedError
+    def _internal(app, fastapi_app, **kwargs):
+        """
+        Must be implemented by plugin if returns_plugin_api=True.
+        Should return plugin_api object OR None.
+        """
+        raise NotImplementedError(
+            "Plugins must implement `_internal` unless returns_plugin_api=False."
+        )
 
-    # =======================================================
-    # LIFECYCLE V2 — ENABLE PHASE
-    # =======================================================
+    # ---------- LIFECYCLE HOOKS ----------
     def on_pre_enable(self, app, fastapi_app):
-        """
-        Called BEFORE plugin._internal() is executed.
-        Good for validating config, preparing state, etc.
-        """
+        """Called before plugin enable (validation stage)."""
         pass
 
     def on_enable(self, app, fastapi_app, plugin_api):
-        """
-        Called AFTER plugin._internal() returns plugin_api.
-        Good for binding API or initializing extra fields.
-        """
+        """Called after plugin enabled but before discovery."""
         pass
 
     def on_post_enable(self, app, fastapi_app, plugin_api):
-        """
-        Called AFTER plugin is registered into App.plugin namespace.
-        Good for discovery, file scanning, etc.
-        """
+        """Called after plugin is fully enabled."""
         pass
 
-    # =======================================================
-    # LIFECYCLE V2 — STARTUP PHASE
-    # =======================================================
     def on_plugins_loaded(self, app, fastapi_app):
-        """
-        Called once all plugins have been enabled,
-        but BEFORE controllers are loaded.
-        Good for plugin interdependency.
-        """
+        """Called after all plugins are loaded, before controllers are discovered."""
         pass
 
     def on_controllers_loaded(self, app, fastapi_app):
-        """
-        Called AFTER RouterRegistry.load() finishes.
-        Good for binding controller-based events, sockets, jobs.
-        """
+        """Called after controllers discovery."""
         pass
 
-    def on_app_ready(self, app, fastapi_app):
-        """
-        Called AFTER on_ready & on_ready_async.
-        At this point, the app is fully ready to serve requests.
-        Good for starting workers, cron schedulers, etc.
-        """
-        pass
-
-    # =======================================================
-    # EXISTING HOOKS (UNCHANGED)
-    # =======================================================
     def on_ready(self, app, fastapi_app, plugin_api):
+        """Called before serving (sync)."""
         pass
 
     async def on_ready_async(self, app, fastapi_app, plugin_api):
+        """Async version of on_ready."""
+        pass
+
+    def on_app_ready(self, app, fastapi_app, plugin_api):
+        """Final sync hook before server serves."""
+        pass
+
+    # ---------- SHUTDOWN ----------
+    def on_before_shutdown(self, app, fastapi_app, plugin_api):
+        pass
+
+    async def on_before_shutdown_async(self, app, fastapi_app, plugin_api):
         pass
 
     def on_shutdown(self, app, fastapi_app, plugin_api):
@@ -104,18 +93,26 @@ class BasePlugin(ABC):
     async def on_shutdown_async(self, app, fastapi_app, plugin_api):
         pass
 
-    # =======================================================
-    # LIFECYCLE V2 — SHUTDOWN PHASE (NEW)
-    # =======================================================
-    def on_before_shutdown(self, app, fastapi_app, plugin_api):
+    # ---------- HELPER ----------
+    @classmethod
+    def get_plugin_root(cls):
         """
-        Called BEFORE on_shutdown/on_shutdown_async.
-        Good for flushing buffers, stopping schedulers, pausing queue.
+        Return root path of plugin module using inspect.getfile().
         """
-        pass
-
-    async def on_before_shutdown_async(self, app, fastapi_app, plugin_api):
+        import os
+        plugin_file = inspect.getfile(cls)
+        return os.path.dirname(plugin_file)
+    
+    @classmethod
+    def get_publish_metadata(cls):
         """
-        Async counterpart executed before async shutdown hooks.
+        Return publish metadata if defined in plugin module.
         """
-        pass
+        from fastapi_opinionated.shared.publish_metadata import PublishMetadata
+        import sys
+        module = sys.modules[cls.__module__]
+        if hasattr(module, "publish_metadata"):
+            pm = getattr(module, "publish_metadata")
+            if isinstance(pm, PublishMetadata):
+                return pm
+        return None

@@ -29,10 +29,6 @@ class App(PluginRegistry):
             app = FastAPI(**fastapi_kwargs)
             cls.fastapi = app
             
-            
-
-            
-
             # =======================================================
             # COMBINED LIFESPAN
             # =======================================================
@@ -57,28 +53,31 @@ class App(PluginRegistry):
 
                     # on_plugins_loaded
                     for name, plugin in plugins.items():
-                        if hasattr(plugin, "on_plugins_loaded"):
+                        if plugin.__class__.on_plugins_loaded is not BasePlugin.on_plugins_loaded:
                             plugin.on_plugins_loaded(cls, app)
 
                     # on_controllers_loaded
                     for name, plugin in plugins.items():
-                        if hasattr(plugin, "on_controllers_loaded"):
+                        if plugin.__class__.on_controllers_loaded is not BasePlugin.on_controllers_loaded:
                             plugin.on_controllers_loaded(cls, app)
 
                     # on_ready (+ async)
                     for name, plugin in plugins.items():
                         plugin_api = getattr(cls.plugin, name, None)
 
-                        if hasattr(plugin, "on_ready"):
+                        if plugin.__class__.on_ready is not BasePlugin.on_ready:
                             plugin.on_ready(cls, app, plugin_api)
 
-                        if hasattr(plugin, "on_ready_async"):
+                        if plugin.__class__.on_ready_async is not BasePlugin.on_ready_async:
                             await plugin.on_ready_async(cls, app, plugin_api)
 
                     # on_app_ready
                     for name, plugin in plugins.items():
-                        if hasattr(plugin, "on_app_ready"):
-                            plugin.on_app_ready(cls, app)
+                        plugin_api = getattr(cls.plugin, name, None)
+                        
+                        
+                        if plugin.__class__.on_app_ready is not BasePlugin.on_app_ready:
+                            plugin.on_app_ready(cls, app, plugin_api)
 
                     logger.info("FastAPI application completed initialization.")
 
@@ -103,34 +102,27 @@ class App(PluginRegistry):
                     for name, plugin in plugins.items():
                         plugin_api = getattr(cls.plugin, name, None)
 
-                        if hasattr(plugin, "on_before_shutdown"):
-                            try:
-                                plugin.on_before_shutdown(cls, app, plugin_api)
-                            except Exception as e:
-                                logger.error(f"Error in on_before_shutdown for {name}: {e}")
+                        # Prefer async if plugin overrides it
+                        if plugin.__class__.on_before_shutdown_async is not BasePlugin.on_before_shutdown_async:
+                            logger.info(f"Shutting down plugin async '{name}'")
+                            await plugin.on_before_shutdown_async(cls, app, plugin_api)
 
-                        if hasattr(plugin, "on_before_shutdown_async"):
-                            try:
-                                await plugin.on_before_shutdown_async(cls, app, plugin_api)
-                            except Exception as e:
-                                logger.error(f"Error in on_before_shutdown_async for {name}: {e}")
+                        # Otherwise use sync if overridden
+                        elif plugin.__class__.on_before_shutdown is not BasePlugin.on_before_shutdown:
+                            logger.info(f"Shutting down plugin '{name}'")
+                            plugin.on_before_shutdown(cls, app, plugin_api)
 
                     for name, plugin in plugins.items():
                         plugin_api = getattr(cls.plugin, name, None)
+                        # Prefer async if plugin overrides it
+                        if plugin.__class__.on_shutdown_async is not BasePlugin.on_shutdown_async:
+                            logger.info(f"Shutting down plugin async '{name}'")
+                            await plugin.on_shutdown_async(cls, app, plugin_api)
 
-                        if hasattr(plugin, "on_shutdown_async"):
+                        # Otherwise use sync if overridden
+                        elif plugin.__class__.on_shutdown is not BasePlugin.on_shutdown:
                             logger.info(f"Shutting down plugin '{name}'")
-                            try:
-                                await plugin.on_shutdown_async(cls, app, plugin_api)
-                            except Exception:
-                                pass
-
-                        if hasattr(plugin, "on_shutdown"):
-                            logger.info(f"Shutting down plugin '{name}'")
-                            try:
-                                plugin.on_shutdown(cls, app, plugin_api)
-                            except Exception:
-                                pass
+                            plugin.on_shutdown(cls, app, plugin_api)
 
             # Attach lifespan to app
             app.router.lifespan_context = combined_lifespan

@@ -3,206 +3,119 @@ from abc import ABC, abstractmethod
 
 class BasePlugin(ABC):
     """
-    Strict and minimal plugin abstraction used by the framework.
+    Base abstraction for all plugins.
 
-    Every plugin must define:
-        - ``public_name`` (str): Human-friendly plugin name
-        - ``command_name`` (str): Command identifier used by @AppCmd
-        - ``_internal()`` (static method): The command handler, decorated
-          with ``@AppCmd(plugin.command_name)`` and returning a plugin API object.
+    Existing hooks:
+        - on_ready
+        - on_ready_async
+        - on_shutdown
+        - on_shutdown_async
 
-    Plugins may optionally implement lifecycle hooks:
-        - ``on_ready``
-        - ``on_ready_async``
-        - ``on_shutdown``
-        - ``on_shutdown_async``
+    NEW (Lifecycle V2 hooks — fully optional, non-breaking):
+        ENABLE PHASE (before FastAPI startup):
+            - on_pre_enable
+            - on_enable
+            - on_post_enable
 
-    Lifecycle Integration
-    ---------------------
-    All lifecycle hooks are executed *inside* FastAPI's lifespan context,
-    which is implemented using ``asynccontextmanager``:
+        STARTUP PHASE (during lifespan startup):
+            - on_plugins_loaded
+            - on_controllers_loaded
+            - on_app_ready
 
-    .. code-block:: python
-
-        @asynccontextmanager
-        async def lifespan(app: FastAPI):
-            # Startup phase
-            yield
-            # Shutdown phase
-
-    This means:
-        - ``on_ready`` and ``on_ready_async`` run during the startup phase,
-          after all plugins are enabled and before the app starts handling requests.
-
-        - ``on_shutdown`` and ``on_shutdown_async`` run during the shutdown phase,
-          after FastAPI stops receiving requests but before the application fully exits.
-
-    Hooks are guaranteed to run in order, are isolated per plugin, and must be
-    idempotent to ensure safe reloads, reinitialization, or development hot-reloads.
-
-    Notes
-    -----
-    - Long-blocking or CPU-heavy work should not run directly in hooks.
-      Use background tasks or thread executors instead.
-
-    - ``plugin_api`` returned by ``_internal()`` is passed to every hook,
-      allowing stateful or resource-based plugins to keep internal handles.
-
-    - If a hook fails, the framework may interrupt application startup/shutdown
-      depending on severity.
+        SHUTDOWN PHASE (before existing shutdown hooks):
+            - on_before_shutdown
+            - on_before_shutdown_async
     """
 
     public_name: str = ""
     command_name: str = ""
+    required_config: bool | None = False 
 
     # =======================================================
-    # INTERNAL INITIALIZER (MANDATORY)
+    # MANDATORY INTERNAL INIT
     # =======================================================
     @staticmethod
     @abstractmethod
     def _internal(app, fastapi_app, *args, **kwargs):
-        """
-        Internal plugin initializer.
-
-        This method must be decorated using ``@AppCmd(plugin.command_name)``
-        so the framework can dispatch commands to enable or configure the plugin.
-
-        Parameters
-        ----------
-        app : Any
-            The host application or plugin manager instance.
-            Provides access to framework-level configuration or registries.
-
-        fastapi_app : fastapi.FastAPI
-            The underlying FastAPI application object.
-
-        *args :
-            Additional positional arguments supplied by the framework or user.
-
-        **kwargs :
-            Additional keyword arguments supplied by the framework or user.
-
-        Returns
-        -------
-        Any
-            A plugin API object that will be passed to all lifecycle hooks.
-
-        Raises
-        ------
-        NotImplementedError
-            If the method is not implemented by the plugin.
-        """
         raise NotImplementedError
 
     # =======================================================
-    # STARTUP HOOKS
+    # LIFECYCLE V2 — ENABLE PHASE
+    # =======================================================
+    def on_pre_enable(self, app, fastapi_app):
+        """
+        Called BEFORE plugin._internal() is executed.
+        Good for validating config, preparing state, etc.
+        """
+        pass
+
+    def on_enable(self, app, fastapi_app, plugin_api):
+        """
+        Called AFTER plugin._internal() returns plugin_api.
+        Good for binding API or initializing extra fields.
+        """
+        pass
+
+    def on_post_enable(self, app, fastapi_app, plugin_api):
+        """
+        Called AFTER plugin is registered into App.plugin namespace.
+        Good for discovery, file scanning, etc.
+        """
+        pass
+
+    # =======================================================
+    # LIFECYCLE V2 — STARTUP PHASE
+    # =======================================================
+    def on_plugins_loaded(self, app, fastapi_app):
+        """
+        Called once all plugins have been enabled,
+        but BEFORE controllers are loaded.
+        Good for plugin interdependency.
+        """
+        pass
+
+    def on_controllers_loaded(self, app, fastapi_app):
+        """
+        Called AFTER RouterRegistry.load() finishes.
+        Good for binding controller-based events, sockets, jobs.
+        """
+        pass
+
+    def on_app_ready(self, app, fastapi_app):
+        """
+        Called AFTER on_ready & on_ready_async.
+        At this point, the app is fully ready to serve requests.
+        Good for starting workers, cron schedulers, etc.
+        """
+        pass
+
+    # =======================================================
+    # EXISTING HOOKS (UNCHANGED)
     # =======================================================
     def on_ready(self, app, fastapi_app, plugin_api):
-        """
-        Synchronous startup hook executed after the framework and FastAPI
-        application are fully initialized, but before the server begins
-        processing HTTP requests.
-
-        Executed *inside* FastAPI's lifespan startup phase.
-
-        Parameters
-        ----------
-        app : Any
-            Main framework application or container object.
-
-        fastapi_app : fastapi.FastAPI
-            The FastAPI instance to which routers, middleware, or events
-            may be attached.
-
-        plugin_api : Any
-            The object returned by ``_internal()``, containing plugin-scoped
-            resources or state.
-
-        Notes
-        -----
-        - Should be idempotent to avoid duplicate side effects.
-        - Avoid long-blocking operations; use async tasks when required.
-        """
         pass
 
     async def on_ready_async(self, app, fastapi_app, plugin_api):
-        """
-        Asynchronous startup hook executed after the framework and FastAPI
-        application are initialized, but before request handling begins.
-
-        Executed *inside* FastAPI's lifespan startup phase.
-
-        Parameters
-        ----------
-        app : Any
-            Main framework application or container object.
-
-        fastapi_app : fastapi.FastAPI
-            The FastAPI instance.
-
-        plugin_api : Any
-            Plugin-scoped API returned by ``_internal()``.
-
-        Notes
-        -----
-        - Ideal for async I/O, async DB connections, or async initialization.
-        - Must not block the event loop for extended periods.
-        """
         pass
 
-    # =======================================================
-    # SHUTDOWN HOOKS
-    # =======================================================
     def on_shutdown(self, app, fastapi_app, plugin_api):
-        """
-        Synchronous shutdown hook executed when FastAPI begins its shutdown
-        sequence, but before the application fully exits.
-
-        Executed *inside* FastAPI's lifespan shutdown phase.
-
-        Parameters
-        ----------
-        app : Any
-            Main framework application or container object.
-
-        fastapi_app : fastapi.FastAPI
-            FastAPI instance, used mainly for cleanup behavior.
-
-        plugin_api : Any
-            Plugin API returned by ``_internal()`` used for releasing resources.
-
-        Notes
-        -----
-        - Suitable for closing files, flushing buffers, or synchronously
-          releasing resources.
-        """
         pass
 
     async def on_shutdown_async(self, app, fastapi_app, plugin_api):
+        pass
+
+    # =======================================================
+    # LIFECYCLE V2 — SHUTDOWN PHASE (NEW)
+    # =======================================================
+    def on_before_shutdown(self, app, fastapi_app, plugin_api):
         """
-        Asynchronous shutdown hook executed as part of FastAPI's lifespan
-        shutdown phase.
+        Called BEFORE on_shutdown/on_shutdown_async.
+        Good for flushing buffers, stopping schedulers, pausing queue.
+        """
+        pass
 
-        Ideal for releasing async resources such as:
-            - Async DB connections
-            - Async queues
-            - Background tasks
-            - Async network clients
-
-        Parameters
-        ----------
-        app : Any
-            Main framework body.
-
-        fastapi_app : fastapi.FastAPI
-            The FastAPI instance.
-
-        plugin_api : Any
-            Plugin-scoped API returned by ``_internal()``.
-
-        Notes
-        -----
-        - This hook should gracefully await cleanup tasks.
-        - Avoid hanging the shutdown sequence indefinitely.
+    async def on_before_shutdown_async(self, app, fastapi_app, plugin_api):
+        """
+        Async counterpart executed before async shutdown hooks.
         """
         pass

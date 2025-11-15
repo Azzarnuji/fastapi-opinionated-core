@@ -203,41 +203,104 @@ class RouterRegistry:
 
                 importlib.import_module(module_path)
                 logger.info(f"Imported module: {module_path}")
-
+                
     # ----------------------------------------------------------------------
-    # FASTAPI ROUTER OUTPUT
+    # PATH NORMALIZATION
+    # ----------------------------------------------------------------------
+    @staticmethod
+    def normalize_path(path: str) -> str:
+        """Normalize route path to avoid false non-duplicates like /users vs /users/."""
+        if not path.startswith("/"):
+            path = "/" + path
+
+        # remove trailing slash except root
+        if path != "/" and path.endswith("/"):
+            path = path[:-1]
+
+        # collapse multiple slashes
+        while "//" in path:
+            path = path.replace("//", "/")
+
+        return path
+
+                
+    # ----------------------------------------------------------------------
+    # DUPLICATE DETECTION
+    # ----------------------------------------------------------------------
+    @classmethod
+    def detect_route_duplicates(cls):
+        """
+        Detect duplicate (METHOD, PATH) routes across class-based and functional routes.
+
+        Returns
+        -------
+        dict :
+            {
+                (method, path): [
+                    { handler, file, controller },
+                    ...
+                ]
+            }
+        """
+        collisions = {}
+
+        # CLASS-BASED
+        for r in cls.get_routes():
+            key = (r["http_method"].upper(), cls.normalize_path(r["path"]))
+            entry = {
+                "handler": r["handler"].__name__,
+                "file": r["file_path"],
+                "controller": r["controller"],
+            }
+            collisions.setdefault(key, []).append(entry)
+
+        # FUNCTIONAL-BASED
+        for fr in cls.function_routes:
+            key = (fr["http_method"].upper(), fr["path"])
+            entry = {
+                "handler": fr["handler"].__name__,
+                "file": fr["file_path"],
+                "controller": None,
+            }
+            collisions.setdefault(key, []).append(entry)
+
+        # Return only duplicates
+        return {key: vals for key, vals in collisions.items() if len(vals) > 1}
+            
+    
+
+        # ----------------------------------------------------------------------
+    # FASTAPI ROUTER OUTPUT (WITH DUPLICATE VALIDATION)
     # ----------------------------------------------------------------------
     @classmethod
     def as_fastapi_router(cls):
         """
-        Convert all controller-based and functional-based metadata into a
-        FastAPI ``APIRouter`` instance.
-
-        Returns
-        -------
-        fastapi.APIRouter
-            Fully populated router with all previously registered routes.
-
-        Route Behavior
-        --------------
-        Each route is registered using:
-            - the HTTP method
-            - the path
-            - the handler function
-            - tag grouping (controller group or functional group)
-
-        Logging includes:
-            - route path
-            - HTTP method
-            - handler function
-            - originating controller (if any)
-
-        Notes
-        -----
-        - The registry does *not* modify the main FastAPI app directly.
-        - The caller is responsible for attaching this router via
-          ``fastapi_app.include_router(...)``.
+        Convert registered routes into a FastAPI router,
+        and throw error if duplicate (METHOD, PATH) exists.
         """
+
+        # ================================
+        # DUPLICATE VALIDATION
+        # ================================
+        duplicates = cls.detect_route_duplicates()
+        if duplicates:
+            msg_lines = ["Duplicate route definitions detected:\n"]
+
+            for (method, path), entries in duplicates.items():
+                msg_lines.append(f"  [{method}] {path}")
+                for e in entries:
+                    controller_info = f" (controller={e['controller']})" if e["controller"] else ""
+                    msg_lines.append(
+                        f"    - handler: {e['handler']}{controller_info}\n"
+                        f"      file: {e['file']}"
+                    )
+                msg_lines.append("")  # spacing
+
+            raise RuntimeError("\n".join(msg_lines))
+
+        # ================================
+        # NO DUPLICATE → PROCEED
+        # ================================
         router = APIRouter()
 
         # CLASS-BASED ROUTES
@@ -248,6 +311,7 @@ class RouterRegistry:
                 methods=[route["http_method"]],
                 tags=[route["group"]],
             )
+
             logger.info(
                 f"Registered route: [{route['http_method']}] {route['path']} -> "
                 f"{route['controller']}.{route['handler'].__name__}"
@@ -261,9 +325,36 @@ class RouterRegistry:
                 methods=[fr["http_method"]],
                 tags=[fr["group"]],
             )
+
             logger.info(
                 f"Registered function route: [{fr['http_method']}] "
                 f"{fr['path']} -> {fr['handler'].__name__}"
             )
 
         return router
+
+
+    @classmethod
+    def get_all_routes(cls):
+        """
+        Get all registered routes (class-based + functional) as a combined list.
+
+        Returns
+        -------
+        list of dict
+            Each dict contains:
+                - path : str
+                - http_method : str
+                - handler : callable
+                - controller : str or None
+                - file_path : str
+                - group : str or None
+
+        Notes
+        -----
+        This method combines routes from both class-based controllers and
+        functional registrations into a single list for inspection.
+        """
+        routes = cls.get_routes()
+        routes.extend(cls.function_routes)
+        return routes

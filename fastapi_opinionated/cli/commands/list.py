@@ -22,7 +22,9 @@ def c(text, level="INFO"):
 # ===========================================================
 # LIST CLI
 # ===========================================================
+list_cli = typer.TypedHelpFormatter if hasattr(typer, 'TypedHelpFormatter') else typer.Typer
 list_cli = typer.Typer(help="List utilities")
+
 
 def load_enabled_plugins():
     CONFIG_FILE = ".fastapi_opinionated/enabled_plugins.py"
@@ -81,27 +83,61 @@ def list_handlers(
     registry = PluginRegistryStore.registries
     routes = RouterRegistry.get_all_routes()
 
-    # ================================
-    # MODE 1 — ROUTES ONLY
-    # ================================
+    # ======================================================
+    # MODE — ROUTES ONLY (GROUPED BY FILE)
+    # ======================================================
     if show_routes:
-        typer.echo(c("\n=== Loaded Routes ===\n", "INFO"))
+        typer.echo(c("\n=== Loaded Routes (By File) ===\n", "INFO"))
 
         if not routes:
             typer.echo(c("No routes found.", "WARNING"))
             return
 
-        for r in routes:
-            method = c(r["http_method"], "INFO")
-            path = c(r["path"], "DEBUG")
-            typer.echo(f"  [{method}] {path}")
+        # PRIORITY ORDER
+        HTTP_ORDER = {
+            "GET": 1,
+            "POST": 2,
+            "PUT": 3,
+            "PATCH": 4,
+            "DELETE": 5,
+        }
 
-        typer.echo()
+        # Group routes by file_path
+        grouped = {}
+        for r in routes:
+            file_path = r.get("file_path") or "<no-file>"
+
+            # normalize relative path
+            try:
+                file_path = os.path.relpath(file_path, os.getcwd())
+            except:
+                pass
+
+            grouped.setdefault(file_path, []).append(r)
+
+        # Print grouping
+        for file_path, file_routes in grouped.items():
+            typer.echo(c(file_path, "WARNING"))
+
+            # SORT ROUTES BY HTTP METHOD PRIORITY
+            file_routes = sorted(
+                file_routes,
+                key=lambda r: HTTP_ORDER.get(r["http_method"].upper(), 999)
+            )
+
+            for r in file_routes:
+                method = c(r["http_method"], "INFO")
+                path = c(r["path"], "DEBUG")
+                typer.echo(f"  [{method}] {path}")
+
+            typer.echo()
+
         return
 
-    # ================================
-    # MODE 2 — PLUGIN HANDLERS
-    # ================================
+
+    # ======================================================
+    # MODE — PLUGIN HANDLERS
+    # ======================================================
     typer.echo(c("\n=== Plugin Handlers ===\n", "INFO"))
 
     if not registry:
@@ -141,13 +177,5 @@ def list_handlers(
                 typer.echo()
 
         typer.echo()
-
-    # # Auto-show routes AFTER plugin handlers (optional)
-    # typer.echo(c("\n=== Loaded Routes ===\n", "INFO"))
-
-    # for r in routes:
-    #     method = c(r["http_method"], "INFO")
-    #     path = c(r["path"], "DEBUG")
-    #     typer.echo(f"  [{method}] {path}")
 
     typer.echo()

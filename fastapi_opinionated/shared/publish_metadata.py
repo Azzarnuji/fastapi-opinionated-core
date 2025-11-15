@@ -6,8 +6,8 @@ class PublishMetadata(BaseModel):
     overwrite: bool = False
     overwrite_rules: dict[str, bool] = {}
     
-    async def pre_publish():
+    async def pre_publish(self):
         pass
     
-    async def post_publish():
+    async def post_publish(self):
         pass

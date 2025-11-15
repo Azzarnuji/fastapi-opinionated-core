@@ -2,7 +2,9 @@ import importlib
 import inspect
 import os
 from fastapi import APIRouter
+from fastapi_opinionated.exceptions.plugin_exception import PluginException, PluginRuntimeException
 from fastapi_opinionated.shared.logger import ns_logger
+
 
 logger = ns_logger("RouterRegistry")
 
@@ -219,6 +221,10 @@ class RouterRegistry:
                     logger.info(f"Imported controller: {module_path}")
                 except Exception as e:
                     logger.error(f"Failed to import {module_path}: {e}")
+                    raise SystemExit(1) from e
+                except (PluginException, PluginRuntimeException) as pe:
+                    logger.error(f"Plugin error during import of {module_path}: {pe}")
+                    raise SystemExit(1) from pe
 
                 
     # ----------------------------------------------------------------------

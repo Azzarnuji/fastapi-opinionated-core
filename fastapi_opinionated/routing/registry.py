@@ -2,9 +2,15 @@ import importlib
 import inspect
 import os
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from fastapi_opinionated.exceptions.plugin_exception import PluginException, PluginRuntimeException
+from fastapi_opinionated.middleware.di import resolve_middleware_dependencies
+from fastapi_opinionated.middleware import Next
 from fastapi_opinionated.shared.logger import ns_logger
-
+import traceback
+from fastapi_opinionated.exceptions.middleware_exception import (
+    MiddlewareException)
+from fastapi_opinionated.http.abort import AbortException
 
 logger = ns_logger("RouterRegistry")
 
@@ -221,10 +227,10 @@ class RouterRegistry:
                     logger.info(f"Imported controller: {module_path}")
                 except Exception as e:
                     logger.error(f"Failed to import {module_path}: {e}")
-                    raise SystemExit(1) from e
+                    os._exit(1)
                 except (PluginException, PluginRuntimeException) as pe:
                     logger.error(f"Plugin error during import of {module_path}: {pe}")
-                    raise SystemExit(1) from pe
+                    os._exit(1)
 
                 
     # ----------------------------------------------------------------------
@@ -329,9 +335,11 @@ class RouterRegistry:
 
         # CLASS-BASED ROUTES
         for route in routes:
+            handler = route["handler"]
+            fastapi_handler = cls._wrap_with_middleware(handler)
             router.add_api_route(
                 route["path"],
-                route["handler"],
+                fastapi_handler,
                 methods=[route["http_method"]],
                 tags=[route["group"]],
             )
@@ -343,19 +351,144 @@ class RouterRegistry:
 
         # FUNCTIONAL ROUTES
         for fr in cls.function_routes:
+            handler = fr["handler"]
+            fastapi_handler = cls._wrap_with_middleware(handler)
             router.add_api_route(
                 fr["path"],
-                fr["handler"],
+                fastapi_handler,
                 methods=[fr["http_method"]],
                 tags=[fr["group"]],
             )
 
             logger.info(
-                f"Registered function route: [{fr['http_method']}] "
+                f"Registered route: [{fr['http_method']}] "
                 f"{fr['path']} -> {fr['handler'].__name__}"
             )
 
         return router
+    
+    
+    @classmethod
+    def _wrap_with_middleware(cls, handler, instance=None):
+        try:
+            import inspect
+            from fastapi import Request
+            from fastapi.responses import JSONResponse
+            import traceback
+
+            from fastapi_opinionated.http.abort import AbortException
+            from fastapi_opinionated.exceptions.middleware_exception import MiddlewareException
+
+            sig = inspect.signature(handler)  # ✅ ambil signature ASLI handler
+
+            async def wrapped(**kwargs):
+                try:
+                    request: Request = kwargs.get("request")
+
+                    # ✅ FRAMEWORK-LEVEL VALIDATION
+                    if request is None:
+                        raise MiddlewareException(
+                            handler_name=handler.__name__,
+                            middleware_name=None,
+                            msg="Route with middleware must have a 'request: Request' parameter",
+                        )
+
+                    # ============================
+                    # 1. AMBIL MIDDLEWARE CLASS
+                    # ============================
+                    class_middlewares = []
+                    if instance:
+                        class_middlewares = getattr(
+                            instance.__class__,
+                            "__class_middlewares__",
+                            []
+                        )
+
+                    # ============================
+                    # 2. AMBIL MIDDLEWARE METHOD
+                    # ============================
+                    method_middlewares = getattr(
+                        handler,
+                        "__method_middlewares__",
+                        []
+                    )
+
+                    all_middlewares = [
+                        *class_middlewares,
+                        *method_middlewares,
+                    ]
+
+                    async def call_handler():
+                        bound = sig.bind_partial(**kwargs)
+                        return await handler(*bound.args, **bound.kwargs)
+
+                    async def run(index: int):
+                        try:
+                            if index >= len(all_middlewares):
+                                return await call_handler()
+
+                            mw = all_middlewares[index]
+
+                            if not getattr(mw, "__is_opinionated_middleware__", False):
+                                raise MiddlewareException(
+                                    handler.__name__,
+                                    getattr(mw, "__name__", str(mw)),
+                                    "Middleware must be decorated with @Middleware",
+                                )
+
+                            values, target, mw_instance = await resolve_middleware_dependencies(
+                                mw, request
+                            )
+
+                            Next.set(Next(lambda: run(index + 1)))
+
+                            if mw_instance is not None:
+                                result = await target(mw_instance, **values)
+                            else:
+                                result = await target(**values)
+
+                            if result is not None:
+                                return result
+
+                            return await run(index + 1)
+
+                        except AbortException as e:
+                            logger.warning(
+                                f"Request aborted by middleware {mw.__name__}: "
+                                f"{e.status_code} {e.message}"
+                            )
+                            return JSONResponse(
+                                status_code=e.status_code,
+                                content={"detail": e.message},
+                            )
+
+                    return await run(0)
+
+                except MiddlewareException as e:
+                    logger.error(f"[MiddlewareException] {e.payload}")
+
+                    return JSONResponse(
+                        status_code=e.status_code,
+                        content={"detail": e.payload},
+                    )
+
+                except AbortException:
+                    raise  # biar FastAPI yang handle kalau keluar dari handler
+
+                except Exception as e:
+                    traceback.print_exc()
+                    logger.error(f"Fatal error in handler {handler.__name__}: {e}")
+                    raise
+
+            wrapped.__signature__ = sig
+            wrapped.__name__ = handler.__name__
+            wrapped.__doc__ = handler.__doc__
+
+            return wrapped
+
+        except Exception as e:
+            logger.error(f"Gagal membungkus handler {handler}: {e}")
+            raise
 
 
     @classmethod

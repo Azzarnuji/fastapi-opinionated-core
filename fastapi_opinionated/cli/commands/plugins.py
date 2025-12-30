@@ -282,6 +282,68 @@ def enable_plugin(plugin_path: str):
         else:
             typer.echo(c("Skipping publish. You can publish later with:", "WARNING"))
             typer.echo("  fastapi-opinionated plugins publish " + plugin_path)
+            
+# ===========================================================
+# COMMAND: DISABLE
+# ===========================================================
+@plugins_cli.command("disable")
+def disable_plugin(
+    plugin_path: str,
+    remove_files: bool = typer.Option(
+        None,
+        "--remove-files",
+        help="Remove all published plugin files",
+    ),
+):
+    enabled = load_enabled_plugins()
+
+    if plugin_path not in enabled:
+        typer.echo(c(f"Plugin '{plugin_path}' is not enabled.", "WARNING"))
+        raise typer.Exit(0)
+
+    # -------------------------------------------------------
+    # Import plugin to read metadata (domain)
+    # -------------------------------------------------------
+    try:
+        PluginClass = import_string(plugin_path)
+        plugin_instance = PluginClass()
+    except Exception as e:
+        typer.echo(c(f"Failed to import plugin: {e}", "ERROR"))
+        raise typer.Exit(1)
+
+    # -------------------------------------------------------
+    # Ask confirmation for file removal (if not specified)
+    # -------------------------------------------------------
+    if remove_files is None:
+        remove_files = typer.confirm(
+            "Do you want to remove all published plugin files?",
+            default=False,
+        )
+
+    # -------------------------------------------------------
+    # Remove published domain files
+    # -------------------------------------------------------
+    if remove_files:
+        meta = plugin_instance.get_publish_metadata()
+        domain = meta.domain
+        domain_path = os.path.join("app", "domains", domain)
+
+        if os.path.exists(domain_path):
+            typer.echo(c(f"Removing domain folder: {domain_path}", "WARNING"))
+            import shutil
+            shutil.rmtree(domain_path)
+            typer.echo(c("✔ Plugin files removed.", "SUCCESS"))
+        else:
+            typer.echo(c("No published files found.", "INFO"))
+
+    # -------------------------------------------------------
+    # Unregister plugin
+    # -------------------------------------------------------
+    enabled.remove(plugin_path)
+    write_enabled_plugins(enabled)
+
+    typer.echo(c(f"Plugin disabled: {plugin_path}", "SUCCESS"))
+
 
 
 # ===========================================================
@@ -336,6 +398,7 @@ def publish_plugin(plugin_path: str, force: bool = typer.Option(False, "--force"
     domain = meta.domain
     overwrite_all = meta.overwrite
     overwrite_rules = meta.overwrite_rules or {}
+    skipped_files = meta.skipped_files or []
     if hasattr(meta, "pre_publish"):
         typer.echo()
         typer.echo(c(f"Running Pre Publish Script", "INFO"))
@@ -367,7 +430,6 @@ def publish_plugin(plugin_path: str, force: bool = typer.Option(False, "--force"
 
     copied = []
     skipped = []
-
     for root, dirs, files in os.walk(publish_src):
         # ---------------------------------------------
         # EXCLUDE publish.py (metadata-only file)
@@ -384,7 +446,11 @@ def publish_plugin(plugin_path: str, force: bool = typer.Option(False, "--force"
 
             rule = overwrite_rules.get(file)
             allow = overwrite_all or rule is True or force
-
+            
+            if file in skipped_files:
+                skipped.append(dst)
+                continue
+            
             if os.path.exists(dst) and not allow:
                 skipped.append(dst)
                 continue

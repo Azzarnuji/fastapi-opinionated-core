@@ -336,7 +336,7 @@ class RouterRegistry:
         # CLASS-BASED ROUTES
         for route in routes:
             handler = route["handler"]
-            fastapi_handler = cls._wrap_with_middleware(handler)
+            fastapi_handler = cls._wrap_with_middleware(handler) if getattr(handler, "__attached_middlewares__", False) else handler
             router.add_api_route(
                 route["path"],
                 fastapi_handler,

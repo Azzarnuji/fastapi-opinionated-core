@@ -29,6 +29,7 @@ def UseMiddleware(*middlewares):
             # ===== METHOD / FUNCTION LEVEL =====
             existing = getattr(target, "__method_middlewares__", [])
             target.__method_middlewares__ = [*existing, *middlewares]
+            target.__attached_middlewares__ = True
             return target
         except MiddlewareException as e:
             logger.error(e.__repr__())

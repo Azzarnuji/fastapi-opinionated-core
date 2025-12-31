@@ -192,7 +192,13 @@ class RouterRegistry:
         root = root.rstrip("/")
 
         for current_root, dirs, files in os.walk(root):
+            
+            parts = current_root.split(os.sep)
 
+            # 🚫 Skip ANY ignored folder in path
+            if any(p.startswith("__") for p in parts):
+                continue
+            
             # Skip everything that is NOT inside a controllers folder
             # Example valid: .../controllers, .../controllers/x, .../controllers/x/y
             if "controllers" not in current_root.split("/"):
@@ -440,7 +446,15 @@ class RouterRegistry:
                                 mw, request
                             )
 
-                            Next.set(Next(lambda: run(index + 1)))
+
+                            next_obj = Next(lambda: run(index + 1))
+                            Next.set(next_obj)
+                            
+                            # Inject 'next' manual if signature asks for it
+                            # target is the function to call
+                            target_sig = inspect.signature(target)
+                            if "next" in target_sig.parameters:
+                                values["next"] = next_obj
 
                             if mw_instance is not None:
                                 result = await target(mw_instance, **values)

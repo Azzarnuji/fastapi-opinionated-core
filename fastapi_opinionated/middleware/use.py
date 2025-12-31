@@ -11,6 +11,15 @@ def UseMiddleware(*middlewares):
 
     def decorator(target):
         try:
+            
+            logger.info(f"Applying middlewares: {', '.join(middleware.__name__ for middleware in middlewares)} to target: {target.__name__}")
+            # ===== CLASS LEVEL =====
+            if isinstance(target, type):
+                existing = getattr(target, "__class_middlewares__", [])
+                target.__class_middlewares__ = [*existing, *middlewares]
+                target.__attached_middlewares__ = True
+                return target
+
             sig = inspect.signature(target)
             request = sig.parameters.get("request")
             if request is None:
@@ -19,13 +28,7 @@ def UseMiddleware(*middlewares):
                     middleware_name=", ".join(m.__name__ for m in middlewares),
                     msg= f"Target function/method '{target.__name__}' must have a 'request' parameter to use middlewares."
                 )
-            logger.info(f"Applying middlewares: {', '.join(middleware.__name__ for middleware in middlewares)} to target: {target.__name__}")
-            # ===== CLASS LEVEL =====
-            if isinstance(target, type):
-                existing = getattr(target, "__class_middlewares__", [])
-                target.__class_middlewares__ = [*existing, *middlewares]
-                return target
-
+    
             # ===== METHOD / FUNCTION LEVEL =====
             existing = getattr(target, "__method_middlewares__", [])
             target.__method_middlewares__ = [*existing, *middlewares]
